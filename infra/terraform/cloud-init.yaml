@@ -82,15 +82,17 @@ write_files:
       maxretry = 3
       bantime = 86400
 
+  # Nginx rate limit config (must be in http context)
+  - path: /etc/nginx/conf.d/rate-limit.conf
+    content: |
+      limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+
   # Nginx config (reverse proxy)
   - path: /etc/nginx/sites-available/openclaw
     content: |
       server {
           listen 80;
           server_name _;
-
-          # Rate limiting
-          limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
 
           location / {
               limit_req zone=api burst=20 nodelay;
@@ -324,8 +326,9 @@ runcmd:
     async def rate_limit(request: Request, call_next):
         if request.url.path.startswith("/v1/"):
             ip = request.client.host if request.client else "unknown"
-            now, window = time.time(), now - settings.rate_limit_window
-            rate_limit_store[ip] = [t for t in rate_limit_store[ip] if t > window]
+            now = time.time()
+            window_start = now - settings.rate_limit_window
+            rate_limit_store[ip] = [t for t in rate_limit_store[ip] if t > window_start]
             if len(rate_limit_store[ip]) >= settings.rate_limit_requests: return JSONResponse(status_code=429, content={"error": "Rate limit exceeded"})
             rate_limit_store[ip].append(now)
         return await call_next(request)

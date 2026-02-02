@@ -9,90 +9,33 @@ packages:
   - fail2ban
   - ufw
   - unattended-upgrades
-  - curl
-  - git
   - nginx
   - certbot
   - python3-certbot-nginx
+  - git
 
 write_files:
-  # Docker Compose file
-  - path: /opt/openclaw/docker-compose.yml
-    content: |
-      version: "3.8"
-      services:
-        openclaw:
-          build:
-            context: ./app
-          container_name: openclaw-lite
-          restart: unless-stopped
-          ports:
-            - "8080:8080"
-          environment:
-            - ENVIRONMENT=production
-            - LOG_LEVEL=INFO
-            - OPENAI_API_KEY=${openai_api_key}
-            - ANTHROPIC_API_KEY=${anthropic_api_key}
-            - MONTHLY_BUDGET_USD=${monthly_budget_usd}
-            - COMPLEXITY_THRESHOLD=${complexity_threshold}
-          healthcheck:
-            test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-            interval: 30s
-            timeout: 10s
-            retries: 3
-
-  # App source files
-  - path: /opt/openclaw/app/requirements.txt
-    content: |
-      fastapi>=0.104.0
-      uvicorn[standard]>=0.24.0
-      openai>=1.0.0
-      anthropic>=0.39.0
-      pydantic>=2.5.0
-      pydantic-settings>=2.1.0
-      python-dotenv>=1.0.0
-      httpx>=0.25.0
-
-  - path: /opt/openclaw/app/Dockerfile
-    content: |
-      FROM python:3.12-slim
-      WORKDIR /app
-      COPY requirements.txt .
-      RUN pip install --no-cache-dir -r requirements.txt
-      COPY src/ ./src/
-      RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
-      USER appuser
-      EXPOSE 8080
-      CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8080"]
-
-  # Fail2ban jail config
   - path: /etc/fail2ban/jail.local
     content: |
       [DEFAULT]
       bantime = 3600
       findtime = 600
       maxretry = 5
-
       [sshd]
       enabled = true
       port = 22
-      filter = sshd
-      logpath = /var/log/auth.log
       maxretry = 3
       bantime = 86400
 
-  # Nginx rate limit config (must be in http context)
   - path: /etc/nginx/conf.d/rate-limit.conf
     content: |
       limit_req_zone $$binary_remote_addr zone=api:10m rate=10r/s;
 
-  # Nginx config (reverse proxy)
   - path: /etc/nginx/sites-available/openclaw
     content: |
       server {
           listen 80;
           server_name _;
-
           location / {
               limit_req zone=api burst=20 nodelay;
               proxy_pass http://127.0.0.1:8080;
@@ -102,276 +45,38 @@ write_files:
               proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
               proxy_set_header X-Forwarded-Proto $$scheme;
               proxy_read_timeout 300;
-              proxy_connect_timeout 300;
           }
-
-          # Security headers
           add_header X-Frame-Options "SAMEORIGIN" always;
           add_header X-Content-Type-Options "nosniff" always;
-          add_header X-XSS-Protection "1; mode=block" always;
-          add_header Referrer-Policy "strict-origin-when-cross-origin" always;
       }
 
-  # Unattended upgrades config
-  - path: /etc/apt/apt.conf.d/50unattended-upgrades
+  - path: /opt/openclaw/.env
     content: |
-      Unattended-Upgrade::Allowed-Origins {
-          "$${distro_id}:$${distro_codename}";
-          "$${distro_id}:$${distro_codename}-security";
-          "$${distro_id}ESMApps:$${distro_codename}-apps-security";
-          "$${distro_id}ESM:$${distro_codename}-infra-security";
-      };
-      Unattended-Upgrade::AutoFixInterruptedDpkg "true";
-      Unattended-Upgrade::Remove-Unused-Dependencies "true";
-      Unattended-Upgrade::Automatic-Reboot "false";
-
-  # Python app source files
-  - path: /opt/openclaw/app/src/__init__.py
-    content: |
-      # OpenClaw Lite
-
-  - path: /opt/openclaw/app/src/config.py
-    content: |
-      from pydantic_settings import BaseSettings
-      class Settings(BaseSettings):
-          version: str = "1.0.0"
-          environment: str = "production"
-          port: int = 8080
-          log_level: str = "INFO"
-          openai_api_key: str = ""
-          anthropic_api_key: str = ""
-          openai_model: str = "gpt-4o-mini"
-          claude_model: str = "claude-sonnet-4-20250514"
-          complexity_threshold: float = 0.5
-          rate_limit_requests: int = 100
-          rate_limit_window: int = 60
-          monthly_budget_usd: float = 50.0
-          allowed_origins: list[str] = ["*"]
-          class Config:
-              env_file = ".env"
-      settings = Settings()
-
-  - path: /opt/openclaw/app/src/providers.py
-    content: |
-      import logging
-      import uuid
-      from typing import Any
-      import anthropic
-      import openai
-      from pydantic import BaseModel
-      logger = logging.getLogger(__name__)
-      class ProviderResponse(BaseModel):
-          id: str
-          model: str
-          content: str
-          provider: str
-          usage: dict[str, int]
-      class OpenAIProvider:
-          def __init__(self, api_key: str, model: str = "gpt-4o-mini"):
-              self.model = model
-              self.client = openai.AsyncOpenAI(api_key=api_key) if api_key else None
-          async def generate(self, messages: list[dict], max_tokens: int = 512, temperature: float = 0.7) -> ProviderResponse:
-              if not self.client: raise RuntimeError("OpenAI not configured")
-              response = await self.client.chat.completions.create(model=self.model, messages=messages, max_tokens=max_tokens, temperature=temperature)
-              return ProviderResponse(id=response.id, model=response.model, content=response.choices[0].message.content or "", provider="openai", usage={"prompt_tokens": response.usage.prompt_tokens, "completion_tokens": response.usage.completion_tokens, "total_tokens": response.usage.total_tokens})
-          def is_available(self) -> bool: return self.client is not None
-      class ClaudeProvider:
-          def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514"):
-              self.model = model
-              self.client = anthropic.AsyncAnthropic(api_key=api_key) if api_key else None
-          def _convert_messages(self, messages):
-              system, converted = None, []
-              for msg in messages:
-                  if msg.get("role") == "system": system = msg.get("content", "")
-                  elif msg.get("role") == "assistant": converted.append({"role": "assistant", "content": msg.get("content", "")})
-                  else: converted.append({"role": "user", "content": msg.get("content", "")})
-              if converted and converted[0]["role"] == "assistant": converted.insert(0, {"role": "user", "content": "Continue."})
-              return system, converted
-          async def generate(self, messages: list[dict], max_tokens: int = 512, temperature: float = 0.7) -> ProviderResponse:
-              if not self.client: raise RuntimeError("Anthropic not configured")
-              system, converted = self._convert_messages(messages)
-              if not converted: converted = [{"role": "user", "content": "Hello"}]
-              kwargs = {"model": self.model, "max_tokens": max_tokens, "messages": converted, "temperature": temperature}
-              if system: kwargs["system"] = system
-              response = await self.client.messages.create(**kwargs)
-              content = "".join(b.text for b in response.content if hasattr(b, "text"))
-              return ProviderResponse(id=f"chatcmpl-{uuid.uuid4().hex[:8]}", model=self.model, content=content, provider="claude", usage={"prompt_tokens": response.usage.input_tokens, "completion_tokens": response.usage.output_tokens, "total_tokens": response.usage.input_tokens + response.usage.output_tokens})
-          def is_available(self) -> bool: return self.client is not None
-
-  - path: /opt/openclaw/app/src/cost_tracker.py
-    content: |
-      from datetime import datetime, timezone
-      PRICING = {"gpt-4o-mini": {"input": 0.15, "output": 0.60}, "claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00}}
-      class CostTracker:
-          def __init__(self, monthly_budget_usd: float = 50.0):
-              self.monthly_budget = monthly_budget_usd
-              self._month = datetime.now(timezone.utc).strftime("%Y-%m")
-              self._costs = {"openai": 0.0, "claude": 0.0}
-              self._tokens = {"openai": {"input": 0, "output": 0}, "claude": {"input": 0, "output": 0}}
-              self._requests = 0
-          def track(self, provider: str, model: str, input_tokens: int, output_tokens: int):
-              p = PRICING.get(model, {"input": 1.0, "output": 1.0})
-              cost = (input_tokens/1e6)*p["input"] + (output_tokens/1e6)*p["output"]
-              self._costs[provider] += cost
-              self._tokens[provider]["input"] += input_tokens
-              self._tokens[provider]["output"] += output_tokens
-              self._requests += 1
-              return {"cost_usd": round(cost, 6)}
-          def get_stats(self):
-              total = self._costs["openai"] + self._costs["claude"]
-              return {"month": self._month, "total_cost_usd": round(total, 4), "budget_remaining_usd": round(self.monthly_budget - total, 4), "by_provider": {"openai": {"cost_usd": round(self._costs["openai"], 4)}, "claude": {"cost_usd": round(self._costs["claude"], 4)}}, "total_requests": self._requests}
-
-  - path: /opt/openclaw/app/src/router.py
-    content: |
-      import re
-      from .providers import OpenAIProvider, ClaudeProvider, ProviderResponse
-      from .cost_tracker import CostTracker
-      class ComplexityAnalyzer:
-          PATTERNS = [r"\banalyze\b", r"\bstep[- ]by[- ]step\b", r"\bexplain\b", r"\bcompare\b", r"```", r"\bcode\b", r"\bimplement\b"]
-          def __init__(self, threshold: float = 0.5):
-              self.threshold = threshold
-              self._patterns = [re.compile(p, re.IGNORECASE) for p in self.PATTERNS]
-          def is_complex(self, messages) -> bool:
-              text = " ".join(m.get("content", "") for m in messages)
-              score = min(len(text.split())/200, 1.0)*0.4 + min(sum(1 for p in self._patterns if p.search(text))/5, 1.0)*0.6
-              return score >= self.threshold
-      class QueryRouter:
-          def __init__(self, openai_provider, claude_provider, cost_tracker, complexity_threshold=0.5):
-              self.openai, self.claude, self.cost_tracker = openai_provider, claude_provider, cost_tracker
-              self.analyzer = ComplexityAnalyzer(threshold=complexity_threshold)
-              self.openai_count, self.claude_count = 0, 0
-          async def route(self, messages, max_tokens=512, temperature=0.7) -> ProviderResponse:
-              if self.analyzer.is_complex(messages) and self.claude.is_available():
-                  provider, self.claude_count = self.claude, self.claude_count + 1
-              elif self.openai.is_available():
-                  provider, self.openai_count = self.openai, self.openai_count + 1
-              elif self.claude.is_available():
-                  provider, self.claude_count = self.claude, self.claude_count + 1
-              else: raise RuntimeError("No providers available")
-              response = await provider.generate(messages=messages, max_tokens=max_tokens, temperature=temperature)
-              self.cost_tracker.track(provider=response.provider, model=response.model, input_tokens=response.usage["prompt_tokens"], output_tokens=response.usage["completion_tokens"])
-              return response
-          def get_stats(self):
-              total = self.openai_count + self.claude_count
-              return {"total_requests": total, "openai_requests": self.openai_count, "claude_requests": self.claude_count, "cost": self.cost_tracker.get_stats()}
-
-  - path: /opt/openclaw/app/src/main.py
-    content: |
-      import logging
-      import time
-      from collections import defaultdict
-      from contextlib import asynccontextmanager
-      from fastapi import FastAPI, HTTPException, Request
-      from fastapi.middleware.cors import CORSMiddleware
-      from fastapi.responses import JSONResponse
-      from pydantic import BaseModel
-      from .config import settings
-      from .providers import OpenAIProvider, ClaudeProvider
-      from .router import QueryRouter
-      from .cost_tracker import CostTracker
-      logging.basicConfig(level=getattr(logging, settings.log_level.upper()), format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-      logger = logging.getLogger(__name__)
-      query_router = None
-      rate_limit_store = defaultdict(list)
-      @asynccontextmanager
-      async def lifespan(app: FastAPI):
-          global query_router
-          logger.info(f"Starting OpenClaw Lite v{settings.version}")
-          openai_provider = OpenAIProvider(api_key=settings.openai_api_key, model=settings.openai_model)
-          claude_provider = ClaudeProvider(api_key=settings.anthropic_api_key, model=settings.claude_model)
-          if not openai_provider.is_available() and not claude_provider.is_available(): raise RuntimeError("No API keys configured")
-          logger.info(f"OpenAI: {'available' if openai_provider.is_available() else 'not configured'}")
-          logger.info(f"Claude: {'available' if claude_provider.is_available() else 'not configured'}")
-          cost_tracker = CostTracker(monthly_budget_usd=settings.monthly_budget_usd)
-          query_router = QueryRouter(openai_provider=openai_provider, claude_provider=claude_provider, cost_tracker=cost_tracker, complexity_threshold=settings.complexity_threshold)
-          yield
-          logger.info("Shutting down")
-      app = FastAPI(title="OpenClaw Lite", version=settings.version, lifespan=lifespan)
-      app.add_middleware(CORSMiddleware, allow_origins=settings.allowed_origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
-      @app.middleware("http")
-      async def rate_limit(request: Request, call_next):
-          if request.url.path.startswith("/v1/"):
-              ip = request.client.host if request.client else "unknown"
-              now = time.time()
-              window_start = now - settings.rate_limit_window
-              rate_limit_store[ip] = [t for t in rate_limit_store[ip] if t > window_start]
-              if len(rate_limit_store[ip]) >= settings.rate_limit_requests: return JSONResponse(status_code=429, content={"error": "Rate limit exceeded"})
-              rate_limit_store[ip].append(now)
-          return await call_next(request)
-      class ChatMessage(BaseModel):
-          role: str
-          content: str
-      class ChatRequest(BaseModel):
-          messages: list[ChatMessage]
-          max_tokens: int = 512
-          temperature: float = 0.7
-      class ChatResponse(BaseModel):
-          id: str
-          model: str
-          content: str
-          provider: str
-          usage: dict[str, int]
-      @app.get("/health")
-      async def health(): return {"status": "healthy", "version": settings.version}
-      @app.get("/")
-      async def root(): return {"name": "OpenClaw Lite", "version": settings.version}
-      @app.post("/v1/chat/completions", response_model=ChatResponse)
-      async def chat(request: ChatRequest):
-          if not query_router: raise HTTPException(status_code=503, detail="Not initialized")
-          try:
-              messages = [{"role": m.role, "content": m.content} for m in request.messages]
-              response = await query_router.route(messages=messages, max_tokens=request.max_tokens, temperature=request.temperature)
-              return ChatResponse(id=response.id, model=response.model, content=response.content, provider=response.provider, usage=response.usage)
-          except Exception as e:
-              logger.error(f"Error: {e}")
-              raise HTTPException(status_code=500, detail=str(e))
-      @app.get("/v1/models")
-      async def models():
-          m = []
-          if settings.openai_api_key: m.append({"id": settings.openai_model, "provider": "openai"})
-          if settings.anthropic_api_key: m.append({"id": settings.claude_model, "provider": "claude"})
-          return {"data": m}
-      @app.get("/v1/stats")
-      async def stats():
-          if not query_router: raise HTTPException(status_code=503, detail="Not initialized")
-          return query_router.get_stats()
+      OPENAI_API_KEY=${openai_api_key}
+      ANTHROPIC_API_KEY=${anthropic_api_key}
+      MONTHLY_BUDGET_USD=${monthly_budget_usd}
+      COMPLEXITY_THRESHOLD=${complexity_threshold}
 
 runcmd:
-  # Enable and start Docker
-  - systemctl enable docker
-  - systemctl start docker
+  - systemctl enable docker && systemctl start docker
   - usermod -aG docker ubuntu
-
-  # Configure UFW firewall
   - ufw default deny incoming
   - ufw default allow outgoing
   - ufw allow 22/tcp
   - ufw allow 80/tcp
   - ufw allow 443/tcp
   - ufw --force enable
-
-  # Enable fail2ban
-  - systemctl enable fail2ban
-  - systemctl start fail2ban
-
-  # Enable unattended upgrades
-  - systemctl enable unattended-upgrades
-  - systemctl start unattended-upgrades
-
-  # Configure Nginx
+  - systemctl enable fail2ban && systemctl start fail2ban
   - rm -f /etc/nginx/sites-enabled/default
-  - ln -sf /etc/nginx/sites-available/openclaw /etc/nginx/sites-enabled/openclaw
+  - ln -sf /etc/nginx/sites-available/openclaw /etc/nginx/sites-enabled/
   - nginx -t && systemctl reload nginx
-
-  # Build and start the container
-  - cd /opt/openclaw && docker-compose build
-  - cd /opt/openclaw && docker-compose up -d
-
-  # Setup SSL if domain provided
+  - git clone https://github.com/Mark-Rivera-ai/Claude-OpenClaw-Lite.git /opt/openclaw/repo
+  - cp -r /opt/openclaw/repo/app /opt/openclaw/app
+  - cp /opt/openclaw/repo/docker-compose.yml /opt/openclaw/
+  - cd /opt/openclaw && docker-compose up -d --build
   - |
     if [ -n "${domain_name}" ] && [ -n "${admin_email}" ]; then
       certbot --nginx -d ${domain_name} --non-interactive --agree-tos -m ${admin_email}
-      systemctl reload nginx
     fi
 
-final_message: "OpenClaw Lite deployment complete!"
+final_message: "OpenClaw Lite ready!"

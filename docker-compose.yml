@@ -7,13 +7,11 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"
+    env_file:
+      - .env
     environment:
       - ENVIRONMENT=production
       - LOG_LEVEL=INFO
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - MONTHLY_BUDGET_USD=${MONTHLY_BUDGET_USD:-50}
-      - COMPLEXITY_THRESHOLD=${COMPLEXITY_THRESHOLD:-0.5}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s

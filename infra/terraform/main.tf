@@ -91,6 +91,7 @@ resource "aws_instance" "openclaw" {
   instance_type          = var.instance_type
   key_name               = aws_key_pair.openclaw.key_name
   vpc_security_group_ids = [aws_security_group.openclaw.id]
+  iam_instance_profile   = aws_iam_instance_profile.openclaw.name
 
   root_block_device {
     volume_size = 20

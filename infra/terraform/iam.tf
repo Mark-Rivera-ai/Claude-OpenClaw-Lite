@@ -1,3 +1,5 @@
+data "aws_caller_identity" "current" {}
+
 # IAM role for EC2 instance
 resource "aws_iam_role" "openclaw" {
   name = "openclaw-lite-instance-role"
@@ -28,7 +30,7 @@ resource "aws_iam_role_policy" "secrets_access" {
           "secretsmanager:GetSecretValue",
           "secretsmanager:DescribeSecret"
         ]
-        Resource = "arn:aws:secretsmanager:us-east-1:318894386324:secret:openclaw-lite/*"
+        Resource = "arn:aws:secretsmanager:us-east-1:${data.aws_caller_identity.current.account_id}:secret:openclaw-lite/*"
       },
       {
         Effect = "Allow"
@@ -37,7 +39,7 @@ resource "aws_iam_role_policy" "secrets_access" {
           "logs:CreateLogStream",
           "logs:PutLogEvents"
         ]
-        Resource = "*"
+        Resource = "arn:aws:logs:us-east-1:${data.aws_caller_identity.current.account_id}:log-group:/openclaw-lite*"
       }
     ]
   })

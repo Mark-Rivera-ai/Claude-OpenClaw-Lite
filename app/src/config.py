@@ -64,7 +64,8 @@ class Settings(BaseSettings):
     monthly_budget_usd: float = 50.0
 
     # Security
-    allowed_origins: list[str] = ["*"]
+    api_key: str = ""
+    allowed_origins: list[str] = []
 
     class Config:
         env_file = ".env"
@@ -83,6 +84,12 @@ class Settings(BaseSettings):
             if secret:
                 self.anthropic_api_key = secret
                 logger.info("Loaded anthropic_api_key from AWS Secrets Manager")
+
+        if not self.api_key:
+            secret = _fetch_aws_secret("openclaw-lite/api-key")
+            if secret:
+                self.api_key = secret
+                logger.info("Loaded api_key from AWS Secrets Manager")
 
 
 settings = Settings()

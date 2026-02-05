@@ -26,6 +26,14 @@ write_files:
       port = 22
       maxretry = 3
       bantime = 86400
+      [nginx-limit-req]
+      enabled = true
+      port = http,https
+      filter = nginx-limit-req
+      logpath = /var/log/nginx/error.log
+      maxretry = 10
+      findtime = 60
+      bantime = 600
 
   - path: /etc/nginx/conf.d/rate-limit.conf
     content: |
@@ -48,9 +56,15 @@ write_files:
           }
           add_header X-Frame-Options "SAMEORIGIN" always;
           add_header X-Content-Type-Options "nosniff" always;
+          add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+          add_header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'" always;
+          add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+          add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
       }
 
   - path: /opt/openclaw/.env
+    permissions: '0600'
+    owner: 'root:root'
     content: |
       MONTHLY_BUDGET_USD=${monthly_budget_usd}
       COMPLEXITY_THRESHOLD=${complexity_threshold}

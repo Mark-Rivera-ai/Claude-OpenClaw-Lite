@@ -25,7 +25,6 @@ variable "domain_name" {
 variable "ssh_allowed_ips" {
   description = "IP addresses allowed to SSH (CIDR format)"
   type        = list(string)
-  default     = ["0.0.0.0/0"] # Restrict in production!
 }
 
 variable "monthly_budget_usd" {

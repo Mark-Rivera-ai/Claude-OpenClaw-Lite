@@ -71,13 +71,40 @@ resource "aws_security_group" "openclaw" {
     description = "HTTPS"
   }
 
-  # Outbound
+  # Outbound - HTTP (apt repos, ACME challenges)
   egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "All outbound traffic"
+    description = "HTTP outbound"
+  }
+
+  # Outbound - HTTPS (API calls, Docker Hub, GitHub, AWS)
+  egress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTPS outbound"
+  }
+
+  # Outbound - DNS (TCP)
+  egress {
+    from_port   = 53
+    to_port     = 53
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "DNS TCP outbound"
+  }
+
+  # Outbound - DNS (UDP)
+  egress {
+    from_port   = 53
+    to_port     = 53
+    protocol    = "udp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "DNS UDP outbound"
   }
 
   tags = {
@@ -92,6 +119,12 @@ resource "aws_instance" "openclaw" {
   key_name               = aws_key_pair.openclaw.key_name
   vpc_security_group_ids = [aws_security_group.openclaw.id]
   iam_instance_profile   = aws_iam_instance_profile.openclaw.name
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
+  }
 
   root_block_device {
     volume_size = 20

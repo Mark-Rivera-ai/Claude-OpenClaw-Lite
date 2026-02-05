@@ -8,12 +8,12 @@ import logging
 import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .config import settings
 from .providers import OpenAIProvider, ClaudeProvider
@@ -87,7 +87,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -97,7 +97,11 @@ app.add_middleware(
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
     if request.url.path.startswith("/v1/"):
-        client_ip = request.client.host if request.client else "unknown"
+        forwarded_for = request.headers.get("X-Forwarded-For")
+        if forwarded_for:
+            client_ip = forwarded_for.split(",")[0].strip()
+        else:
+            client_ip = request.client.host if request.client else "unknown"
         now = time.time()
         window_start = now - settings.rate_limit_window
 
@@ -117,16 +121,46 @@ async def rate_limit_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+# Auth paths that don't require API key
+_PUBLIC_PATHS = {"/health", "/", "/docs", "/openapi.json"}
+
+
+# API key authentication middleware
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    if not settings.api_key:
+        return await call_next(request)
+
+    if request.url.path in _PUBLIC_PATHS:
+        return await call_next(request)
+
+    if not request.url.path.startswith("/v1/"):
+        return await call_next(request)
+
+    api_key = request.headers.get("X-API-Key") or ""
+    auth_header = request.headers.get("Authorization") or ""
+    if auth_header.startswith("Bearer "):
+        api_key = auth_header[7:]
+
+    if api_key != settings.api_key:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Invalid or missing API key"},
+        )
+
+    return await call_next(request)
+
+
 # Request/Response models
 class ChatMessage(BaseModel):
-    role: str
+    role: Literal["system", "user", "assistant"]
     content: str
 
 
 class ChatRequest(BaseModel):
-    messages: list[ChatMessage]
-    max_tokens: int = 512
-    temperature: float = 0.7
+    messages: list[ChatMessage] = Field(min_length=1, max_length=100)
+    max_tokens: int = Field(512, ge=1, le=4096)
+    temperature: float = Field(0.7, ge=0.0, le=2.0)
 
 
 class ChatResponse(BaseModel):
@@ -186,7 +220,7 @@ async def chat_completions(request: ChatRequest):
 
     except Exception as e:
         logger.error(f"Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/v1/models")

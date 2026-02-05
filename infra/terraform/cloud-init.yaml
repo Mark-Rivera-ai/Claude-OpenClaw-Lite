@@ -52,8 +52,6 @@ write_files:
 
   - path: /opt/openclaw/.env
     content: |
-      OPENAI_API_KEY=${openai_api_key}
-      ANTHROPIC_API_KEY=${anthropic_api_key}
       MONTHLY_BUDGET_USD=${monthly_budget_usd}
       COMPLEXITY_THRESHOLD=${complexity_threshold}
 

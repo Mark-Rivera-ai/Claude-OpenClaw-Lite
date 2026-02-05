@@ -25,19 +25,7 @@ variable "domain_name" {
 variable "ssh_allowed_ips" {
   description = "IP addresses allowed to SSH (CIDR format)"
   type        = list(string)
-  default     = ["0.0.0.0/0"]  # Restrict in production!
-}
-
-variable "openai_api_key" {
-  description = "OpenAI API key"
-  type        = string
-  sensitive   = true
-}
-
-variable "anthropic_api_key" {
-  description = "Anthropic API key"
-  type        = string
-  sensitive   = true
+  default     = ["0.0.0.0/0"] # Restrict in production!
 }
 
 variable "monthly_budget_usd" {

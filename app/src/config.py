@@ -4,7 +4,30 @@ OpenClaw Lite Configuration
 Lightweight API-only deployment settings.
 """
 
+import logging
+
 from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
+
+
+def _fetch_aws_secret(secret_name: str) -> str | None:
+    """Fetch a secret value from AWS Secrets Manager.
+
+    Returns None on any failure (missing boto3, no credentials, etc.).
+    """
+    try:
+        import boto3
+        from botocore.exceptions import ClientError
+    except ImportError:
+        return None
+
+    try:
+        client = boto3.client("secretsmanager", region_name="us-east-1")
+        response = client.get_secret_value(SecretId=secret_name)
+        return response["SecretString"]
+    except (ClientError, Exception):
+        return None
 
 
 class Settings(BaseSettings):
@@ -41,6 +64,19 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = False
+
+    def model_post_init(self, __context) -> None:
+        if not self.openai_api_key or self.openai_api_key == "your-openai-key-here":
+            secret = _fetch_aws_secret("openclaw-lite/openai-api-key")
+            if secret:
+                self.openai_api_key = secret
+                logger.info("Loaded openai_api_key from AWS Secrets Manager")
+
+        if not self.anthropic_api_key or self.anthropic_api_key == "your-anthropic-key-here":
+            secret = _fetch_aws_secret("openclaw-lite/anthropic-api-key")
+            if secret:
+                self.anthropic_api_key = secret
+                logger.info("Loaded anthropic_api_key from AWS Secrets Manager")
 
 
 settings = Settings()

@@ -100,12 +100,10 @@ resource "aws_instance" "openclaw" {
   }
 
   user_data = base64encode(templatefile("${path.module}/cloud-init.yaml", {
-    openai_api_key      = var.openai_api_key
-    anthropic_api_key   = var.anthropic_api_key
-    monthly_budget_usd  = var.monthly_budget_usd
+    monthly_budget_usd   = var.monthly_budget_usd
     complexity_threshold = var.complexity_threshold
-    domain_name         = var.domain_name
-    admin_email         = var.admin_email
+    domain_name          = var.domain_name
+    admin_email          = var.admin_email
   }))
 
   tags = {

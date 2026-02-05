@@ -5,9 +5,15 @@ Lightweight API-only deployment settings.
 """
 
 import logging
+import sys
 
 from pydantic_settings import BaseSettings
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stderr,
+)
 logger = logging.getLogger(__name__)
 
 

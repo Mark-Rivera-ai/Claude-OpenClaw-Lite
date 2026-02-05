@@ -4,11 +4,14 @@ OpenClaw Lite Query Router
 Routes queries between OpenAI (simple) and Claude (complex).
 """
 
+import logging
 import re
 from typing import Any
 
 from .providers import OpenAIProvider, ClaudeProvider, ProviderResponse
 from .cost_tracker import CostTracker
+
+logger = logging.getLogger(__name__)
 
 
 class ComplexityAnalyzer:
@@ -72,26 +75,43 @@ class QueryRouter:
 
         is_complex = self.analyzer.is_complex(messages)
 
-        # Determine provider
+        # Determine primary and fallback providers
         if is_complex and self.claude.is_available():
-            provider = self.claude
-            self.claude_count += 1
+            primary = self.claude
+            fallback = self.openai if self.openai.is_available() else None
         elif self.openai.is_available():
-            provider = self.openai
-            self.openai_count += 1
+            primary = self.openai
+            fallback = self.claude if self.claude.is_available() else None
         elif self.claude.is_available():
-            # Fallback to Claude if OpenAI unavailable
-            provider = self.claude
-            self.claude_count += 1
+            primary = self.claude
+            fallback = None
         else:
             raise RuntimeError("No API providers available")
 
-        # Generate response
-        response = await provider.generate(
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
+        # Generate response, falling back on provider errors
+        try:
+            response = await primary.generate(
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            if primary == self.claude:
+                self.claude_count += 1
+            else:
+                self.openai_count += 1
+        except Exception as e:
+            if fallback is None:
+                raise
+            logger.warning(f"{primary.__class__.__name__} failed ({e}), falling back to {fallback.__class__.__name__}")
+            response = await fallback.generate(
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            if fallback == self.claude:
+                self.claude_count += 1
+            else:
+                self.openai_count += 1
 
         # Track costs
         self.cost_tracker.track(
